@@ -1,0 +1,49 @@
+name: Release .oe bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "gufo-org/gufo release tag to wrap (empty: newest release with engine assets)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-oe
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make linked .oe bundles
+        id: make
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: python3 scripts/make_oe.py --repo gufo-org/gufo --tag "$TAG" --out dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.make.outputs.tag }}
+          UPSTREAM_URL: ${{ steps.make.outputs.url }}
+          COUNT: ${{ steps.make.outputs.count }}
+        run: |
+          cat > notes.md <<EOF
+          Linked Open Engine bundles for gufo [$TAG]($UPSTREAM_URL).
+
+          Each \`.oe\` file holds only an \`openengine.json\` whose \`download\` field points at the matching upstream asset, so runners download the engine itself from gufo-org/gufo.
+          EOF
+
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' | while read -r old; do
+            gh release delete "$old" --cleanup-tag --yes
+          done
+
+          gh release create "$TAG" dist/*.oe --title "gufo $TAG" --notes-file notes.md --target "$GITHUB_SHA"
+          echo "Published $COUNT bundles to $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
